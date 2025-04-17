@@ -1,0 +1,7 @@
+Flask
+flask-cors
+playwright
+requests
+twilio
+dotenv
+openai
