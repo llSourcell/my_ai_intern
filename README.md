@@ -1,7 +1,7 @@
 # LeadGen Sales Tool
 
 ## Features
-- Scrape leads from Zocdoc (NYC Lash Salons)
+- Scrape leads from Reddit and X (NYC Real Estate)
 - Dashboard: view, call, and close leads
 - Voice calls via Twilio + ElevenLabs agent
 - LLM-powered conversation
