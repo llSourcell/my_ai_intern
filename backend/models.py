@@ -24,7 +24,8 @@ def init_db():
                 category TEXT,
                 address TEXT,
                 website TEXT,
-                status TEXT DEFAULT 'Not Called'
+                status TEXT DEFAULT 'Not Called',
+                buyer_count INTEGER DEFAULT 0
             )
         ''')
         c.execute('''
@@ -38,3 +39,11 @@ def init_db():
             )
         ''')
         conn.commit()
+        
+        # Check if buyer_count column exists and add it if not
+        try:
+            conn.execute('SELECT buyer_count FROM leads LIMIT 1')
+        except sqlite3.OperationalError:
+            # Column doesn't exist, add it
+            conn.execute('ALTER TABLE leads ADD COLUMN buyer_count INTEGER DEFAULT 0')
+            conn.commit()

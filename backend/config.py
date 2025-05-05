@@ -10,6 +10,9 @@ DEFAULT_CONFIG = {
     'ELEVENLABS_API_KEY': os.getenv('ELEVENLABS_API_KEY', ''),
     'ELEVENLABS_AGENT_ID': os.getenv('ELEVENLABS_AGENT_ID', 'h3dC4sQ9cPDtYItAe0Z8'),
     'LLM_API_KEY': os.getenv('LLM_API_KEY', ''),
+    'BRIGHTDATA_API_TOKEN': os.getenv('BRIGHTDATA_API_TOKEN', ''),
+    'BRIGHTDATA_WEB_UNLOCKER_ZONE': os.getenv('BRIGHTDATA_WEB_UNLOCKER_ZONE', 'mcp_unlocker'),
+    'BRIGHTDATA_BROWSER_AUTH': os.getenv('BRIGHTDATA_BROWSER_AUTH', ''),
 }
 
 def load_config():

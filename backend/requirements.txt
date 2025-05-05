@@ -5,3 +5,6 @@ requests
 twilio
 dotenv
 openai
+python-dotenv
+# Adding Bright Data MCP dependency
+nodejs

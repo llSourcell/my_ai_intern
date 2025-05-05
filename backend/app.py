@@ -2,7 +2,7 @@ import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from models import get_db, init_db
-from scraper import scrape_lash_salons
+from scraper import scrape_real_estate_leads
 from voice import place_call, get_llm_response
 from config import get_config, save_config
 
@@ -32,8 +32,8 @@ def add_lead():
     data = request.json
     with get_db() as conn:
         c = conn.cursor()
-        c.execute('''INSERT INTO leads (name, phone, category, address, website, status) VALUES (?, ?, ?, ?, ?, ?)''',
-                  (data['name'], data['phone'], data['category'], data['address'], data.get('website', ''), data.get('status', 'Not Called')))
+        c.execute('''INSERT INTO leads (name, phone, category, address, website, status, buyer_count) VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                  (data['name'], data['phone'], data['category'], data['address'], data.get('website', ''), data.get('status', 'Not Called'), data.get('buyer_count', 0)))
         conn.commit()
         return {'id': c.lastrowid}, 201
 
@@ -43,7 +43,7 @@ def update_lead(lead_id):
     with get_db() as conn:
         fields = []
         values = []
-        for k in ['name', 'phone', 'category', 'address', 'website', 'status']:
+        for k in ['name', 'phone', 'category', 'address', 'website', 'status', 'buyer_count']:
             if k in data:
                 fields.append(f"{k} = ?")
                 values.append(data[k])
@@ -57,33 +57,24 @@ def update_lead(lead_id):
 @app.route('/api/scrape', methods=['POST'])
 def scrape_new_leads():
     config = get_config()
-    # If missing keys, return dummy data
-    if not config['TWILIO_ACCOUNT_SID'] or not config['ELEVENLABS_API_KEY'] or not config['LLM_API_KEY']:
-        dummy = [
-            {'name': f'Lash Salon {i+1}', 'phone': f'555-000{i+1}', 'category': 'Lash Salon', 'address': f'{i+1} Main St, NYC', 'website': ''}
-            for i in range(10)
-        ]
-        with get_db() as conn:
-            c = conn.cursor()
-            new_ids = []
-            for lead in dummy:
-                c.execute('''INSERT INTO leads (name, phone, category, address, website, status) VALUES (?, ?, ?, ?, ?, ?)''',
-                          (lead['name'], lead['phone'], lead['category'], lead['address'], lead.get('website', ''), 'Not Called'))
-                new_ids.append(c.lastrowid)
-            conn.commit()
-        return {'inserted_ids': new_ids, 'count': len(new_ids), 'dummy': True}
-    # Real scrape
+    # Get location from request or use default
+    location = request.json.get('location', 'Austin, TX')
     limit = request.json.get('limit', 30)
-    scraped = scrape_lash_salons(limit=limit)
+    
+    # If missing keys, return dummy data (dummy handling is now in the scraper)
+    scraped = scrape_real_estate_leads(location=location, limit=limit)
+    
     with get_db() as conn:
         c = conn.cursor()
         new_ids = []
         for lead in scraped:
-            c.execute('''INSERT INTO leads (name, phone, category, address, website, status) VALUES (?, ?, ?, ?, ?, ?)''',
-                      (lead['name'], lead['phone'], lead['category'], lead['address'], lead.get('website', ''), 'Not Called'))
+            c.execute('''INSERT INTO leads (name, phone, category, address, website, status, buyer_count) VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                      (lead['name'], lead['phone'], lead['category'], lead['address'], lead.get('website', ''), 'Not Called', lead.get('buyer_count', 0)))
             new_ids.append(c.lastrowid)
         conn.commit()
-    return {'inserted_ids': new_ids, 'count': len(new_ids)}
+    
+    is_dummy = not config['BRIGHTDATA_API_TOKEN']
+    return {'inserted_ids': new_ids, 'count': len(new_ids), 'dummy': is_dummy}
 
 @app.route('/api/config', methods=['GET', 'POST'])
 def api_config():
@@ -115,26 +106,49 @@ def get_call_logs(lead_id):
 def call_lead():
     data = request.json
     lead_id = data['lead_id']
-    script = data.get('script', "Hello, this is an introductory call from Lash Salon Leads. May I speak to the owner?")
+    script = data.get('script')
     config = get_config()
+    
+    # Get lead info to generate script if not provided
+    with get_db() as conn:
+        lead = conn.execute('SELECT * FROM leads WHERE id = ?', (lead_id,)).fetchone()
+        if not lead:
+            return {'error': 'Lead not found'}, 404
+        
+        # Generate script based on lead data if not provided
+        if not script:
+            agent_name = lead['name'].split()[0] if lead['name'] else "there"
+            buyer_count = lead.get('buyer_count', 0) or 10 # Fallback to 10 if not set
+            zip_code = extract_zip_from_address(lead['address']) or "your area"
+            script = f"Hi {agent_name}, this is Ava from Home IQ. We've tracked {buyer_count} qualified buyers searching in {zip_code} right now. Would you like a list?"
+    
     # Dummy mode
     if not config['TWILIO_ACCOUNT_SID'] or not config['ELEVENLABS_API_KEY'] or not config['LLM_API_KEY']:
         with get_db() as conn:
             conn.execute('UPDATE leads SET status = ? WHERE id = ?', ("Calling", lead_id))
             conn.commit()
         return {'call_sid': 'dummy-call', 'dummy': True}
+    
     # Real mode
-    with get_db() as conn:
-        lead = conn.execute('SELECT * FROM leads WHERE id = ?', (lead_id,)).fetchone()
-        if not lead:
-            return {'error': 'Lead not found'}, 404
-        try:
-            call_sid = place_call(lead['phone'], script)
+    try:
+        call_sid = place_call(lead['phone'], script)
+        with get_db() as conn:
             conn.execute('UPDATE leads SET status = ? WHERE id = ?', ("Calling", lead_id))
             conn.commit()
-            return {'call_sid': call_sid}
-        except Exception as e:
-            return {'error': str(e)}, 500
+        return {'call_sid': call_sid}
+    except Exception as e:
+        return {'error': str(e)}, 500
+
+def extract_zip_from_address(address):
+    """Extract zip code from an address string"""
+    if not address:
+        return None
+    # Simple implementation - would need to be more robust in production
+    parts = address.split()
+    for part in parts:
+        if len(part) == 5 and part.isdigit():
+            return part
+    return None
 
 if __name__ == '__main__':
     import sys
